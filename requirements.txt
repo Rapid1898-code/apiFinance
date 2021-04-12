@@ -48,7 +48,6 @@ selenium==3.141.0
 six==1.15.0
 soupsieve==2.2.1
 SQLAlchemy==1.4.3
-TA-Lib @ file:///C:/Users/Polzi/Documents/GitHub/TA_Lib-0.4.19-cp39-cp39-win_amd64.whl
 urllib3==1.26.4
 virtualenv==20.4.3
 Werkzeug==1.0.1
