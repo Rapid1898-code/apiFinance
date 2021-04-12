@@ -43,5 +43,4 @@ SQLAlchemy==1.4.3
 urllib3==1.26.4
 virtualenv==20.4.3
 Werkzeug==1.0.1
-xlwings==0.23.0
 yfinance==0.1.59
