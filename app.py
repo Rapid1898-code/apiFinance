@@ -1,4 +1,4 @@
-# Direct access to the API on AWS
+# Direct access to the API on Heroku
 # (only working for the links where are no checks for rapidapi.com in the header))
     # https://financerapidapi.herokuapp.com/
     # https://financerapidapi.herokuapp.com/api/v1/yfSummary?ticker=CAT
@@ -14,6 +14,7 @@
     # https://financerapidapi.herokuapp.com/api/v1/yfHistDivs?ticker=AAPL    
     # https://financerapidapi.herokuapp.com/api/v1/dbIncstat?ticker=FB&dt=2019-12-31    
     # https://financerapidapi.herokuapp.com/api/v1/dbIncstat?ticker=FB    
+    # https://financerapidapi.herokuapp.com/api/v1/levermannScore?ticker=FB 
 
 import flask
 from flask import request, jsonify
@@ -22,11 +23,14 @@ from datetime import date
 import requests
 from bs4 import BeautifulSoup
 import time
+import calendar
 import re
 import timeit
 import urllib.request,urllib.error
 import csv
 import codecs
+import yfinance
+import pandas
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text
 
@@ -119,6 +123,84 @@ def clean_value(value, dp=".", tcorr=False, out="None"):
             else: return (value)
         else: print(f"Wrong dp parameter vor {value}")
     else: return(value)
+
+def printNumAbbr(value):
+    """
+    Make abbreviaton for numeric value in thousands (K), millions (M), billions (B) or trillions (T)
+    :param value: numeric value which should be abbreviated
+    :return: string value with maximum possible abbreviation
+    """
+    minus = False
+    if value in ["N","N/A",None,""]: return("N/A")
+    if str(value)[0] == "-":
+        value = float(str(value).replace ("-", ""))
+        minus = True
+    if value > 1000000000000:
+        tmp = round(value / 1000000000000,2)
+        if minus: return ("-"+str(tmp)+"T")
+        else: return (str(tmp)+"T")
+    elif value > 1000000000:
+        tmp = round (value / 1000000000, 2)
+        if minus: return ("-"+str(tmp)+"B")
+        else: return (str (tmp) + "B")
+    elif value > 1000000:
+        tmp = round (value / 1000000, 2)
+        if minus: return ("-"+str(tmp)+"M")
+        else: return (str (tmp) + "M")
+    elif value > 1000:
+        tmp = round (value / 1000, 2)
+        if minus: return ("-"+str(tmp)+"K")
+        else: return (str (tmp) + "K")
+    else: return value
+
+def growthCalc(listElem, countElem):
+    """
+    Return the Growth Rate of Elements in a list
+    :param listElem:    Individual elements in list (calculate growth from right value to left value)
+    :param countElem:   Number of Elements for which the growth should be calculated
+                        if -1 then the elements are counted automatic
+    :return:            growth rate as float
+    """
+    initialListElem = listElem
+    initialCountElem = countElem
+    if countElem == -1:
+        for idx in range(len(listElem)-1,-1,-1):
+            if listElem[idx] in [None,"","N/A",0]:
+                del listElem[idx]
+        if len(listElem) == 0:
+            return ("N/A")
+        countElem = len(listElem) - 1
+    else:
+        for idx in range(len(listElem)-1,-1,-1):
+            if listElem[idx] in [None,"","N/A",0]:
+                del listElem[idx]
+        if len(listElem) <= countElem:
+            countElem = len(listElem) - 1
+
+    listGrowth = []
+    tmpGrowth = 0
+    for i, e in enumerate (listElem):
+        if i < len (listElem) - 1:
+            try:
+                tmpGrowth = (e - listElem[i + 1]) / listElem[i + 1] * 100
+            except:
+                print(f"Growth Calculation not possible: {e}, Content: {listElem}, ListElem: {listElem}, CountElem {countElem}, "
+                      f"Initial ListElem {initialListElem}, Initial CountElem {initialCountElem}")
+            listGrowth.append (tmpGrowth)
+    count = 0
+    sumGrowth = 0
+
+    # print(f"DEBUG: ListGrowth: {listGrowth}")
+    # print(f"DEBUG: CountElem: {countElem}")
+
+    for i, e in enumerate (listGrowth):
+        sumGrowth += e
+        count += 1
+        if count == countElem: break
+    if count == 0 and sumGrowth == 0:
+        return("N/A")
+    else:
+        return sumGrowth / countElem
 
 def read_yahoo_summary(stock,out=True,att=5):
     """
@@ -396,13 +478,13 @@ def readYahooIncomeStatement(stock, out=True, calc=False, wait=1):
         erg[tmpName.text] = tmpCont
 
     if calc:
-        erg["Calc_EPSGrowth1Y"] = clean_value(rtt.growthCalc(erg.get("EBIT", "[]"),2))
-        erg["Calc_EPSGrowthHist"] = clean_value(rtt.growthCalc(erg.get("EBIT", "[]"),-1))
-        erg["Calc_RevenueGrowth1Y"] = clean_value(rtt.growthCalc(erg.get("Total Revenue", "[]"),2))
-        erg["Calc_RevenueGrowthHist"] = clean_value(rtt.growthCalc(erg.get("Total Revenue", "[]"),-1))
-        erg["Calc_NetIncomeGrowthHist"] = clean_value(rtt.growthCalc(erg.get("Net Income Common Stockholders", "[]"),-1))
-        erg["Calc_OperatingIncomeGrowthHist"] = clean_value(rtt.growthCalc(erg.get("Operating Income", "[]"),-1))
-        erg["Calc_ShareBuybacks"] = clean_value (rtt.growthCalc (erg.get ("Diluted Average Shares", "[]"), -1))
+        erg["Calc_EPSGrowth1Y"] = clean_value(growthCalc(erg.get("EBIT", "[]"),2))
+        erg["Calc_EPSGrowthHist"] = clean_value(growthCalc(erg.get("EBIT", "[]"),-1))
+        erg["Calc_RevenueGrowth1Y"] = clean_value(growthCalc(erg.get("Total Revenue", "[]"),2))
+        erg["Calc_RevenueGrowthHist"] = clean_value(growthCalc(erg.get("Total Revenue", "[]"),-1))
+        erg["Calc_NetIncomeGrowthHist"] = clean_value(growthCalc(erg.get("Net Income Common Stockholders", "[]"),-1))
+        erg["Calc_OperatingIncomeGrowthHist"] = clean_value(growthCalc(erg.get("Operating Income", "[]"),-1))
+        erg["Calc_ShareBuybacks"] = clean_value (growthCalc (erg.get ("Diluted Average Shares", "[]"), -1))
         # check if drawback for earnings in the last years
         drawback = False
         drawbackPerc = 0
@@ -572,7 +654,7 @@ def readYahooBalanceSheet (stock, out=True, calc=False):
         erg[tmpName.text] = tmpCont
 
     if calc:
-        erg["Calc_BookValueGrowthHist"] = clean_value(rtt.growthCalc(erg.get("Tangible Book Value", "[]"),-1))
+        erg["Calc_BookValueGrowthHist"] = clean_value(growthCalc(erg.get("Tangible Book Value", "[]"),-1))
 
     # stop = timeit.default_timer ()
     # ic(round(stop-start,2))
@@ -633,7 +715,7 @@ def readYahooCashflow (stock, out=True, calc=False):
         erg[tmpName.text] = tmpCont
 
     if calc:
-        erg["Calc_FCFGrowthHist"] = clean_value(rtt.growthCalc(erg.get("Free Cash Flow", "[]"),-1))
+        erg["Calc_FCFGrowthHist"] = clean_value(growthCalc(erg.get("Free Cash Flow", "[]"),-1))
 
     # stop = timeit.default_timer ()
     # ic(round(stop-start,2))
@@ -801,9 +883,77 @@ def read_yahoo_histprice(stock, read_to=datetime(1950,1,1), keyString=True, out=
 
     return erg
 
+def read_yFinanceRating(stock, out=True):
+    """
+    read rating for stocks on basis the Recommendatins from the yFinance module
+    :param stock: ticker-symbol which should be read
+    :param out: when True then output some status informations during program running
+    :return: dictionary with informations per line and timespans in columns
+    """
+
+    start = timeit.default_timer ()
+
+    erg = {}
+    
+    dataYF = yfinance.Ticker(stock)    
+    tday = datetime.today()
+    fromDT = str((tday - timedelta(days=360)).date())
+    tday = str(tday.date())
+    dfRecommendations = dataYF.recommendations
+
+    if dfRecommendations is not None:
+        pandas.set_option('display.max_rows', dfRecommendations.shape[0]+1)
+        dfRecommendations = dfRecommendations.loc[fromDT:tday]
+        dfRecommendations = dfRecommendations.reset_index()
+        dfRecommendations = dfRecommendations.sort_values('Date', ascending=False)
+        # print(dfRecommendations)
+        # print(len(dfRecommendations))
+
+        erg = dfRecommendations.set_index('Date').T.to_dict('list')					
+        # for key, val in erg.items (): print (f"{key} => {val} {type(val)}")
+
+        listFirms = []
+        listGrades = [0,0,0,0,0]
+        for key, val in erg.items (): 
+            if val[0] not in listFirms:
+                listFirms.append(val[0])
+                if val[1] in ["Strong Buy"]:
+                    listGrades[0] += 1
+                elif val[1] in ["Buy","Market Outperform","Sector Outperform", "Outperform", "Overweight", "Positive"]:
+                    listGrades[1] += 1            
+                elif val[1] in ["Hold","Equal-Weight","In-Line","Market Perform","Neutral","Peer Peform","Perform","Sector Perform","Sector Weight","Mixed"]:
+                    listGrades[2] += 1            
+                elif val[1] in ["Underperform"]:
+                    listGrades[3] += 1            
+                elif val[1] in ["Sell","Underperform","Underperformer","Underweight","Negative","Reduce"]:
+                    listGrades[4] += 1            
+                else:
+                    print(f"Error - wrong Grade Value {val[1]} in dataframe / dictionary...")
+
+        sumFirms = sum(listGrades)
+        sumGrades = 0
+        for i,e in enumerate(listGrades):
+            sumGrades += e * (i+1)
+
+        # print(f"DEBUG: SumGrade: {sumGrades}")
+        # print(f"DEBUG: SumFirms: {sumFirms}")
+        rating = round(sumGrades / sumFirms,1)
+        erg["rating"] = rating
+        erg["opinions"] = sumFirms
+        erg["opinions_detail"] = listGrades
+
+    else:
+        erg["rating"] = "N/A"
+        erg["opinions"] = "N/A"
+        erg["opinions_detail"] = "N/A"
+
+    stop = timeit.default_timer ()
+    # print(f"Time run: {round(stop-start,2)}")
+
+    return (erg)
+
 def read_dayprice(prices,date,direction):
-# read price of a specific date
-# when date not available take nearest day in history from the date
+
     """
     read price for a specific date
     when date not available take nearest day in history from the date
@@ -861,6 +1011,56 @@ def read_yahoo_histdividends(stock, read_to=datetime(1950,1,1), out=True):
     erg = {k: v for k, v in sorted (erg.items (), key=lambda item: item[0], reverse=True)}
 
     return erg
+
+def read_yahoo_earnings_cal(stock, out=True):
+    """
+    read earnings calender for stock
+    future earnings calls and past earnings calls with eps results
+    :param stock: ticker-symbol which should be read
+    :param out: when True then output some status informations during program running
+    :return: dictionary with line per date and different values in columns
+    """
+    erg = {}
+    erg["Header"] = ["Symbol", "Company", "EPS_Estimate", "Reported_EPS", "Surprise"]
+
+    link = "https://finance.yahoo.com/calendar/earnings/?symbol=" + stock
+    if out: print("Reading earnings calender web data for",stock,"...")
+    page = requests.get (link)
+    soup = BeautifulSoup (page.content, "html.parser")
+    time.sleep (4)
+
+    tmp_list = []
+    page = requests.get (link)
+    soup = BeautifulSoup (page.content, "html.parser")
+    table = soup.find (id="fin-cal-table")
+    for row in soup.find_all ("td"): tmp_list.append (row.text.strip ())
+    idx = 0
+
+    #for i in tmp_list: print(i)        # DEBUG
+
+    while idx < len (tmp_list):
+        # cut timezone at the end of the string - sometimes 3chars - sometimes 4chars
+        tmp = tmp_list[idx + 2]
+        ampm_idx = tmp.find ("AM")
+        if ampm_idx == -1: ampm_idx = tmp.find ("PM")
+        tz_cut = ampm_idx + 2
+        tmp = tmp[:tz_cut]
+        #print("DEBUG TMP2: ",tmp)
+
+        dt1 = datetime.strptime (tmp, "%b %d, %Y, %I %p")
+        dt2 = datetime.strftime (dt1, "%Y-%m-%d")
+        erg[dt2] = [clean_value(tmp_list[idx + 0]),
+                    clean_value(tmp_list[idx + 1]),
+                    clean_value(tmp_list[idx + 3]),
+                    clean_value(tmp_list[idx + 4]),
+                    clean_value(tmp_list[idx + 5])]
+        idx += 6
+
+    # if there is only the header and no entries => set the erg-result to {}
+    if len(list(erg.keys())) == 1: erg = {}
+
+    return(erg)
+
 
 def outputStockIncStat (stock):
     engine = create_engine ("mysql+pymysql://rapidtec_Reader:I65faue#RR6#@nl1-ss18.a2hosting.com/rapidtec_stockdb")
@@ -979,6 +1179,513 @@ def outputStockIncStat (stock):
                     val[idx] = int(elem)
 
     return(erg)
+
+def calcLevermannScore (stock, out=True, index=None, financeFlag=None, lastEarningsDate=None):
+    inpIndex = index
+    WAIT = 2
+    erg = {}
+    if out:
+        print ("Calculating Levermann Score for", stock, "...")
+
+    if index == None:
+        if ".DE" in stock:
+            index = "DAX"
+        elif ".AS" in stock:
+            index = "AEX25"
+        elif ".AX" in stock:
+            index = "ASX200"
+        elif ".BR" in stock:
+            index = "BEL20"
+        elif ".CO" in stock:
+            index = "EUROSTOXX600"
+        elif ".FI" in stock:
+            index = "EUROSTOXX600"
+        elif ".HE" in stock:
+            index = "EUROSTOXX600"
+        elif ".HK" in stock:
+            index = "HANGSENG"
+        elif ".IR" in stock:
+            index = "EUROSTOXX600"
+        elif ".KS" in stock:
+            index = "NIKKEI225"
+        elif ".L" in stock:
+            index = "FTSE100"
+        elif ".LS" in stock:
+            index = "EUROSTOXX600"
+        elif ".MC" in stock:
+            index = "IBEX35"
+        elif ".MI" in stock:
+            index = "EUROSTOXX600"
+        elif ".OL" in stock:
+            index = "EUROSTOXX600"
+        elif ".PA" in stock:
+            index = "CAC40"
+        elif ".PR" in stock:
+            index = "EUROSTOXX600"
+        elif ".SR" in stock:
+            index = "TASI"
+        elif ".ST" in stock:
+            index = "EUROSTOXX600"
+        elif ".SW" in stock:
+            index = "SMI"
+        elif ".T" in stock:
+            index = "NIKKEI225"
+        elif ".TO" in stock:
+            index = "TSX"
+        elif ".VI" in stock:
+            index = "ATX"
+        elif ".VX" in stock:
+            index = "SMI"
+        else:
+            index = "SP500"
+
+    #5 - P/E-Ratio Actual / KGV Aktuell
+    # Read summary-data
+    summary = read_yahoo_summary(stock)
+    if "name" not in summary:
+        print(f"Error - Summary data for stock {stock} not found and stopped...")
+        return {}
+    else:
+        if "(" in summary["name"]:
+            summary["name"] = summary["name"].split("(")[0].strip()
+        name = summary["name"]
+        currency = summary["currency"]
+        pe_ratio = summary.get("pe_ratio","N/A")
+
+    # Read data
+    time.sleep (WAIT)
+    profile = read_yahoo_profile (stock)
+    time.sleep (WAIT)
+    bal_sheet = readYahooBalanceSheet (stock)
+    time.sleep (WAIT)
+    insstat = readYahooIncomeStatement (stock,calc=True)
+    time.sleep (WAIT)
+    stat1, stat2 = read_yahoo_statistics (stock)
+    time.sleep (WAIT)
+
+    analyst_rating = read_yFinanceRating(stock)
+    # analyst_rating = read_wsj_rating(stock)
+    # if analyst_rating == {}:
+    #     time.sleep (WAIT)
+    #     analyst_rating2 = read_yahoo_analysis(stock,rating=True)
+        
+    time.sleep (WAIT)
+    analysis = read_yahoo_analysis(stock)
+    time.sleep (WAIT)
+    dates_earnings = read_yahoo_earnings_cal (stock)
+
+    #0 - Common Data
+    if profile != None:
+        sector = profile.get("sector", "N/A")
+        industry = profile.get("industry","N/A")
+        empl = profile.get("empl","N/A")
+    else:
+        sector = "N/A"
+        industry = "N/A"
+        empl = "N/A"
+
+    if financeFlag == None:
+        if sector in ["Financial Services"]:
+            financeFlag = "Y"
+        else:
+            financeFlag = "N"
+
+    #2 - EBIT-Margin / EBIT Marge
+    insstat.get ("Total Revenue", ["N/A"])
+    if "EBIT" not in insstat or financeFlag.upper() == "J":
+        ebit = "N/A"
+        ebit_marge = "N/A"
+    else:
+        ebit = insstat.get ("EBIT", None)[0]
+        revenue = insstat.get ("Total Revenue", None)[0]
+        if ebit != None and revenue not in [None,0]: ebit_marge = round(ebit / revenue * 100,2)
+        else: ebit_marge = "N/A"
+
+    #1 - Return On Equity RoE / Eigenkapitalrendite
+    tmpNetIncStock = "Not needed for calc"
+    tmpCommonStockEqui = "Not needed for calc"
+    if "Return on Equity (ttm)" in stat1 and stat1["Return on Equity (ttm)"] != None:
+        roe = stat1["Return on Equity (ttm)"]
+    else:
+        tmpNetIncStock = insstat.get("Net Income Common Stockholders",None)[0]
+        tmpCommonStockEqui = bal_sheet.get("Common Stock Equity",None)[0]
+        if tmpNetIncStock != None and tmpCommonStockEqui != None:
+            roe = round((tmpNetIncStock / tmpCommonStockEqui) * 100,2)
+        else:
+            roe = "N/A"
+
+    if "Market Cap (intraday)" not in stat2: stat2["Market Cap (intraday)"] = [None]
+    marketcap = stat2["Market Cap (intraday)"][0]
+    if marketcap == None: marketcap = summary["marketcap"]
+    if marketcap in [None,"N/A"]: cap = "N/A"
+    else:
+        if marketcap < 200000:
+            cap = "SmallCap"
+            if inpIndex == None and index == "DAX": ind = "SDAX"
+        elif marketcap < 5000000:
+            cap = "MidCap"
+            if inpIndex == None and index == "DAX": ind = "MDAX"
+        else: cap = "LargeCap"
+    shares_outstanding = stat1.get("Shares Outstanding","N/A")
+
+    if shares_outstanding in ["N/A",None,""]:
+        if "Basic Average Shares" in insstat:
+            for idx_so, cont_so in enumerate(insstat["Basic Average Shares"]):
+                if cont_so != "N/A": break
+            shares_outstanding = insstat["Basic Average Shares"][idx_so]
+    hist_price_stock = read_yahoo_histprice(stock)
+
+    if index != "TASI": hist_price_index = read_yahoo_histprice(index)
+    else:
+        today = datetime.today ()
+        yback = timedelta (days=375)
+        hist_price_index = read_yahoo_histprice (index,today - yback)
+
+    #4 - P/E-Ratio History 5Y / KGV Historisch 5J
+    if "Net Income from Continuing & Discontinued Operation" not in insstat: net_income = "N/A"
+    if "Breakdown" not in insstat:
+        insstat["Breakdown"] = ["N/A"]
+    else:
+        net_income = insstat.get("Net Income from Continuing & Discontinued Operation")
+    count = eps_hist = 0
+    net_income_list = []
+    net_income_date_list = []
+    pe_ratio_hist_list = []
+    pe_ratio_hist_dates = []
+    if insstat["Breakdown"][0] not in [None,"N/A"] and shares_outstanding not in [None,"N/A"] and net_income not in [None,"N/A"]:
+        for idx,cont in enumerate(net_income):
+            if cont == "-": continue
+            else:
+                if insstat["Breakdown"][idx].upper() == "TTM":
+                    dt1 = datetime.strftime (datetime.today (), "%Y-%m-%d")
+                    tmp_date, tmp_price = read_dayprice (hist_price_stock, dt1, "-")
+                    eps_hist += tmp_price / (cont / shares_outstanding)
+                    pe_ratio_hist_list.append (str (round (tmp_price / (cont / shares_outstanding), 2)))
+                    pe_ratio_hist_dates.append("ttm")
+                    net_income_list.append(str(printNumAbbr(cont)))
+                    net_income_date_list.append("ttm")
+                else:
+                    if cont in [None,"N/A",""]:
+                        continue
+                    tmp_date, tmp_price = read_dayprice(hist_price_stock,insstat["Breakdown"][idx],"-")
+                    eps_hist += tmp_price / (cont / shares_outstanding)
+                    pe_ratio_hist_list.append(str(round(tmp_price / (cont / shares_outstanding),2)))
+                    pe_ratio_hist_dates.append(insstat["Breakdown"][idx])
+                    net_income_list.append(str(printNumAbbr(cont)))
+                    net_income_date_list.append(insstat["Breakdown"][idx])
+                count += 1
+
+        pe_ratio_hist = round(eps_hist / count,2)
+    else: pe_ratio_hist = "N/A"
+
+    #3 - Equity Ratio / Eigenkaptialquote
+    if "Common Stock Equity" not in bal_sheet: bal_sheet["Common Stock Equity"] = ["N/A"]
+    if "Breakdown" not in bal_sheet: bal_sheet["Breakdown"] = ["N/A"]
+    if bal_sheet["Common Stock Equity"][0] not in ["N/A",None] and bal_sheet["Total Assets"][0] not in ["N/A",None,0]:
+        equity = bal_sheet["Common Stock Equity"][0]
+        total_assets = bal_sheet["Total Assets"][0]
+        eq_ratio = round(equity / total_assets * 100,2)
+    else:
+        equity = total_assets = eq_ratio = "N/A"
+
+    #6 - Analyst Opinions / Analystenmeinung
+    rating = analyst_rating.get("rating","N/A")
+    rating_count = analyst_rating.get("opinions","N/A")    
+    # if analyst_rating.get("Rating","N/A") != "N/A":
+    #     rating = analyst_rating["Rating"][0]
+    #     rating_count = analyst_rating["Rating"][2]
+    # elif analyst_rating2.get("Rating","N/A") != "N/A":
+    #     rating = analyst_rating2["Rating"]
+    #     rating_count = analyst_rating2["No. of Analysts"][0]
+    # else:
+    #     rating = "N/A"
+
+    #7 Reaction to quarter numbers / Reaktion auf Quartalszahlen
+    last_earningsinfo = key = "N/A"
+    if lastEarningsDate != None or dates_earnings != {}:
+        if lastEarningsDate != None:
+            key = datetime.strftime(lastEarningsDate, "%Y-%m-%d")
+        else:
+            for key in sorted(dates_earnings.keys(), reverse=True):
+                if "Header" in key:
+                    continue
+                if datetime.strptime(key,"%Y-%m-%d") < datetime.today():
+                    break
+        last_earningsinfo = key
+
+        stock_price_before = read_dayprice (hist_price_stock, key, "+")
+        stock_price_before[1] = round (stock_price_before[1], 2)
+        dt1 = datetime.strptime (stock_price_before[0], "%Y-%m-%d") + timedelta (days=1)
+        dt2 = datetime.strftime (dt1, "%Y-%m-%d")
+        stock_price_after = read_dayprice (hist_price_stock, dt2, "+")
+        stock_price_after[1] = round (stock_price_after[1], 2)
+
+        index_price_before = read_dayprice (hist_price_index, stock_price_before[0], "+")
+        index_price_before[1] = round (index_price_before[1], 2)
+        index_price_after = read_dayprice (hist_price_index, dt2, "+")
+        index_price_after[1] = round (index_price_after[1], 2)
+        stock_reaction = round (((stock_price_after[1] - stock_price_before[1]) / stock_price_before[1]) * 100,
+                                2)
+        index_reaction = round (((index_price_after[1] - index_price_before[1]) / index_price_before[1]) * 100,
+                                2)
+        reaction = round (stock_reaction - index_reaction, 2)
+    else:
+        reaction = stock_reaction = stock_price_before = stock_price_after = "N/A"
+        index_reaction = index_price_before = index_price_after = "N/A"
+        key = "N/A"
+
+    #8 Profit Revision / Gewinnrevision
+    #13 - Profit Growth / Gewinnwachstum
+    profitGrowthCalc = False
+    if analysis != {}:
+        next_year_est_current = analysis["Current Estimate"][3]
+        next_year_est_90d_ago = analysis["90 Days Ago"][3]
+
+        if next_year_est_current not in [None,"N/A"] and next_year_est_90d_ago not in [None,"N/A"]:
+            profit_revision = round(((next_year_est_current-next_year_est_90d_ago)/next_year_est_90d_ago)*100,2)
+        else: profit_revision = "N/A"
+        profit_growth_act = analysis["Current Estimate"][2]
+        profit_growth_fut = analysis["Current Estimate"][3]
+
+        if profit_growth_act in [None,"N/A"] or profit_growth_fut in [None,"N/A"]:
+            profit_growth = "N/A"
+        else:
+            profit_growth = round(((profit_growth_fut - profit_growth_act) / profit_growth_act)*100,2)
+    else:
+        profit_revision = "N/A"
+        profit_growth = "N/A"
+        profit_growth_act = "N/A"
+        profit_growth_fut = "N/A"
+        next_year_est_current = "N/A"
+        next_year_est_90d_ago = "N/A"
+        analysis["EPS Trend"] = ["N/A","N/A","N/A","N/A"]
+    if profit_growth == "N/A":
+        profit_growth = round(insstat.get("Calc_EPSGrowthHist","N/A"),2)
+        profitGrowthCalc = True
+
+    #9 Price Change 6month / Kurs Heute vs. Kurs vor 6M
+    #10 Price Change 12month / Kurs Heute vs. Kurs vo 1J
+    #11 Price Momentum / Kursmomentum Steigend
+    dt1 = datetime.strftime (datetime.today(), "%Y-%m-%d")
+    dt2 = datetime.today() - timedelta (days=180)
+    dt2 = datetime.strftime(dt2, "%Y-%m-%d")
+    dt3 = datetime.today() - timedelta (days=360)
+    dt3 = datetime.strftime(dt3, "%Y-%m-%d")
+    price_today = read_dayprice(hist_price_stock,dt1,"-")
+    price_6m_ago = read_dayprice(hist_price_stock,dt2,"+")
+    price_1y_ago = read_dayprice(hist_price_stock,dt3,"+")
+    change_price_6m = round(((price_today[1]-price_6m_ago[1]) / price_6m_ago[1])*100,2)
+    change_price_1y = round(((price_today[1]-price_1y_ago[1]) / price_1y_ago[1])*100,2)
+
+    #12 Dreimonatsreversal
+    dt_today = datetime.today()
+    m = dt_today.month
+    y = dt_today.year
+    d = dt_today.day
+    dates = []
+    for i in range(4):
+        m -= 1
+        if m == 0:
+            y -= 1
+            m = 12
+        ultimo = calendar.monthrange(y,m)[1]
+        dates.append(datetime.strftime(date(y,m,ultimo), "%Y-%m-%d"))
+    stock_price = []
+    index_price = []
+    for i in dates:
+        pr1 = read_dayprice(hist_price_stock, i, "-")
+        stock_price.append([pr1[0],round(pr1[1],2)])
+        pr2 = read_dayprice(hist_price_index, i, "-")
+        index_price.append([pr2[0],round(pr2[1],2)])
+
+    stock_change = []
+    index_change = []
+    for i in range (3, 0, -1):
+        if stock_price[i - 1][1] != 0 and index_price[i - 1][1] != 0:
+            stock_change.append (round (((stock_price[i][1] - stock_price[i - 1][1]) / stock_price[i - 1][1]) * 100, 2))
+            index_change.append (round (((index_price[i][1] - index_price[i - 1][1]) / index_price[i - 1][1]) * 100, 2))
+    if stock_change == []:
+        stock_change = ["N/A", "N/A", "N/A"]
+    if index_change == []:
+        index_change = ["N/A", "N/A", "N/A"]
+
+    lm_points = 0
+    lm_pointsDict = {}
+    #1 - check RoE
+    if roe == "N/A": lm_pointsDict["roe"] = 0
+    elif roe > 20: lm_pointsDict["roe"] = 1
+    elif roe < 10: lm_pointsDict["roe"] = -1
+    else: lm_pointsDict["roe"] = 0
+
+    #2 - check ebit_marge
+    if financeFlag in ["J","Y"] or ebit_marge == "N/A": lm_pointsDict["ebit_marge"] = 0
+    else:
+        if ebit_marge > 12 and financeFlag.upper() == "N": lm_pointsDict["ebit_marge"] = 1
+        elif ebit_marge < 6 and financeFlag.upper() == "N": lm_pointsDict["ebit_marge"] = -1
+        else: lm_pointsDict["ebit_marge"] = 0
+
+    #3 - check eq-ratio
+    if eq_ratio == "N/A": lm_pointsDict["eq_ratio"] = 0
+    else:
+        if financeFlag in ["J","Y"]:
+            if eq_ratio > 10: lm_pointsDict["eq_ratio"] = 1
+            elif eq_ratio < 5: lm_pointsDict["eq_ratio"] = -1
+            else: lm_pointsDict["eq_ratio"] = 0
+        else:
+            if eq_ratio > 25: lm_pointsDict["eq_ratio"] = 1
+            elif eq_ratio < 15: lm_pointsDict["eq_ratio"] = -1
+            else: lm_pointsDict["eq_ratio"] = 0
+
+    #4 - check pe-ratio
+    if pe_ratio == "N/A": lm_pointsDict["pe_ratio"] = 0
+    else:
+        if pe_ratio <12 and pe_ratio > 0: lm_pointsDict["pe_ratio"] = 1
+        elif pe_ratio >16 or pe_ratio <0: lm_pointsDict["pe_ratio"] = -1
+        else: lm_pointsDict["pe_ratio"] = 0
+
+    #5 - check pe-ratio history
+    if pe_ratio_hist == "N/A": lm_pointsDict["pe_ratio_hist"] = 0
+    else:
+        if pe_ratio_hist <12 and pe_ratio_hist > 0: lm_pointsDict["pe_ratio_hist"] = 1
+        elif pe_ratio_hist >16 or pe_ratio_hist <0: lm_pointsDict["pe_ratio_hist"] = -1
+        else: lm_pointsDict["pe_ratio_hist"] = 0
+
+    #6 - check rating
+    if cap == "SmallCap":
+        if rating == "N/A": lm_pointsDict["rating"] = 0
+        elif rating_count >= 5 and rating <= 2: lm_pointsDict["rating"] = -1
+        elif rating_count >= 5 and rating >= 4: lm_pointsDict["rating"] = 1
+        elif rating_count < 5 and rating <= 2: lm_pointsDict["rating"] = -1
+        elif rating_count < 5 and rating >= 4: lm_pointsDict["rating"] = -1
+        else: lm_pointsDict["rating"] = 0
+    else:
+        if rating == "N/A": lm_pointsDict["rating"] = 0
+        elif rating >= 4: lm_pointsDict["rating"] = 1
+        elif rating <= 2: lm_pointsDict["rating"] = -1
+        else: lm_pointsDict["rating"] = 0
+
+    #7 - check to quarter numbers
+    if reaction == "N/A": lm_pointsDict["reaction"] = 0
+    else:
+        if reaction >1: lm_pointsDict["reaction"] = 1
+        elif reaction <-1: lm_pointsDict["reaction"] = -1
+        else: lm_pointsDict["reaction"] = 0
+
+    #8 - check profit revision
+    if profit_revision == "N/A": lm_pointsDict["profit_revision"] = 0
+    else:
+        if profit_revision >1: lm_pointsDict["profit_revision"] = 1
+        elif profit_revision <-1: lm_pointsDict["profit_revision"] = -1
+        else: lm_pointsDict["profit_revision"] = 0
+
+    #9 - change price 6 month
+    if change_price_6m >5: lm_pointsDict["change_price_6m"] = 1
+    elif change_price_6m <-5: lm_pointsDict["change_price_6m"] = -1
+    else: lm_pointsDict["change_price_6m"] = 0
+
+    #10 - change price 1 year
+    if change_price_1y >5: lm_pointsDict["change_price_1y"] = 1
+    elif change_price_1y <-5: lm_pointsDict["change_price_1y"] = -1
+    else: lm_pointsDict["change_price_1y"] = 0
+
+    #11 - price momentum
+    if lm_pointsDict["change_price_6m"] == 1 and lm_pointsDict["change_price_1y"] in [0,-1]:
+        lm_pointsDict["price_momentum"] = 1
+    elif lm_pointsDict["change_price_6m"] == -1 and lm_pointsDict["change_price_1y"] in [0,1]:
+        lm_pointsDict["price_momentum"] = -1
+    else: lm_pointsDict["price_momentum"] = 0
+
+    #12 month reversal effect
+    if cap == "LargeCap":
+        if stock_change[2]<index_change[2] and stock_change[1]<index_change[1] and stock_change[0]<index_change[0]:
+            lm_pointsDict["3monatsreversal"] = 1
+        elif stock_change[2]>index_change[2] and stock_change[1]>index_change[1] and stock_change[0]>index_change[0]:
+            lm_pointsDict["3monatsreversal"] = -1
+        else: lm_pointsDict["3monatsreversal"] = 0
+    else:
+        lm_pointsDict["3monatsreversal"] = 0
+
+    ls_vs = []
+    if stock_change != [] and index_change != []:
+        for i in range (2, -1, -1):
+            if stock_change[i] > index_change[i]:
+                ls_vs.append (">")
+            elif stock_change[i] < index_change[i]:
+                ls_vs.append ("<")
+            else:
+                ls_vs.append ("=")
+    else:
+        ls_vs = ["N/A", "N/A", "N/A"]
+
+    #13 - profit growth
+    if profit_growth == "N/A": lm_pointsDict["profit_growth"] = 0
+    else:
+        if profit_growth >5: lm_pointsDict["profit_growth"] = 1
+        elif profit_growth <-5: lm_pointsDict["profit_growth"] = -1
+        else: lm_pointsDict["profit_growth"] = 0
+
+    # print format marketcap
+    print_cap = printNumAbbr(marketcap)
+
+    # overall recommendation levermann full
+    lm_sum = 0
+    for val in lm_pointsDict.values(): lm_sum += val
+    if cap in ["SmallCap", "MidCap"]:
+        if lm_sum >= 7:
+            rec = "Possible Buy"
+        elif lm_sum in [5, 6]:
+            rec = "Possible Holding"
+        else:
+            rec = "Possible Sell"
+    else:
+        if lm_sum >= 4:
+            rec = "Possible Buy"
+        elif lm_sum in [3]:
+            rec = "Possible Holding"
+        else:
+            rec = "Possible Sell"
+
+    # overall recommendation levermann light
+    lm_sum_light = lm_pointsDict["roe"] + lm_pointsDict["ebit_marge"] + lm_pointsDict["pe_ratio"] \
+                   + lm_pointsDict["reaction"] + lm_pointsDict["change_price_6m"]
+    # overall recomendation levermann full
+    if cap in ["SmallCap","MidCap"]:
+        if lm_sum_light >=4: rec_light = "Possible Buy"
+        else: rec_light = "Possible Sell"
+    else:
+        if lm_sum_light >=3: rec_light = "Possible Buy"
+        else: rec_light = "Possible Sell"
+
+
+    erg["name"] = summary["name"]
+    erg["ticker"] = stock
+    erg["index"] = index
+    erg["marketCap"] = print_cap
+    erg["currency"] = summary["currency"]
+    erg["sector"] = sector
+    erg["industry"] = industry
+    erg = {**erg, **lm_pointsDict}
+    erg["LastEarnings"] = clean_value(last_earningsinfo)
+    erg["1roe"] = roe
+    erg["2ebitMarge"] = ebit_marge
+    erg["3eqRatio"] = eq_ratio
+    erg["4peRatioHist"] = pe_ratio_hist
+    erg["5peRatio"] = pe_ratio
+    erg["6analystRating"] = rating
+    erg["7quartalReaction"] = reaction
+    erg["8profitRevision"] = profit_revision
+    erg["9priceToday6M"] = change_price_6m
+    erg["10priceToday1Y"] = change_price_1y
+    erg["13profitGrowth"] = profit_growth
+    erg["Levermann Score Full"] = lm_sum
+    erg["Levermann Score Light"] = lm_sum_light
+    erg["Recommendation Full"] = rec
+    erg["Recommendation Light"] = rec_light
+    erg["Cap"] = cap
+    erg["Finanzwert"] = financeFlag
+
+    return erg
+
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = True
@@ -1278,6 +1985,46 @@ def api_dbIncStat():
     else:
         return "Error: No ticker provided!"
 
+@app.route ('/api/v1/levermannScore', methods=['GET'])
+def api_levermannScore():
+    # http://127.0.0.1:5000/api/v1/levermannScore?ticker=AAPL
+    # http://127.0.0.1:5000/api/v1/levermannScore?ticker=AAPL&index=DAX
+    # http://127.0.0.1:5000/api/v1/levermannScore?ticker=AAPL&financeflag=Y  
+    # http://127.0.0.1:5000/api/v1/levermannScore?ticker=AAPL&lastearningsdate=2020-12-31   
+    # local db with maria-db
+    # hosted db on a2hosting with read permission only
+    # engine = create_engine ("mysql+pymysql://rapidtec_Reader:I65faue#RR6#@nl1-ss18.a2hosting.com/rapidtec_stockdb")
+    # conn = engine.connect ()
+
+    ticker = request.args.get("ticker")
+    index = request.args.get("index")
+    financeFlag = request.args.get ("financeflag")
+    lastEarningsDate = request.args.get ("lastearningsdate")
+    print(f"DEBUG Ticker: {ticker}")
+    print(f"DEBUG Index: {index}")
+    print(f"DEBUG FinanceFlag: {financeFlag}")
+    print(f"DEBUG LastEarningsDate: {lastEarningsDate}")    
+
+    # # check if api is called from rapidapi.com
+    # if request.headers.get("Host") != "127.0.0.1:5000":
+    #     if request.headers.get("X-RapidAPI-Proxy-Secret") != "ec2f3b60-94b2-11eb-8612-4715b760a3a5":
+    #         return "Error: Wrong API-Call - use www.rapidapi.com for calling the API!"
+
+    if lastEarningsDate != None:
+        lastEarningsDate = datetime.strptime(lastEarningsDate, "%Y-%m-%d")
+
+    if "ticker" in request.args:
+        erg = calcLevermannScore(ticker, index=index, financeFlag=financeFlag, lastEarningsDate=lastEarningsDate)
+        # print(f"DEBUG: {erg}")
+        # Data with filtering on specific date
+
+        if erg != {}:
+            print(erg)
+            return jsonify (erg)
+        else:
+            return f"No data found for ticker {ticker}"
+    else:
+        return "Error: No ticker provided!"
 
 # We only need this for local development.
 if __name__ == '__main__':
