@@ -1716,10 +1716,10 @@ def api_yfSummary():
     # print(len(request.headers))
     # print(type(request.headers))
 
-    # check if api is called from rapidapi.com
-    if request.headers.get("Host") != "127.0.0.1:5000":
-        if request.headers.get("X-RapidAPI-Proxy-Secret") != "ec2f3b60-94b2-11eb-8612-4715b760a3a5":
-            return "Error: Wrong API-Call - use www.rapidapi.com for calling the API!"
+    # # check if api is called from rapidapi.com
+    # if request.headers.get("Host") != "127.0.0.1:5000":
+    #     if request.headers.get("X-RapidAPI-Proxy-Secret") != "ec2f3b60-94b2-11eb-8612-4715b760a3a5":
+    #         return "Error: Wrong API-Call - use www.rapidapi.com for calling the API!"
 
     # check if needed parameter is provided
     if "ticker" in request.args:
