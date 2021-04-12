@@ -1730,7 +1730,7 @@ def api_yfSummary():
         else:
             return f"No summary data found for ticker {ticker}"
     else:
-        return "Error: No ticker provided!"
+        return("Error: No ticker provided!")
 
 @app.route('/api/v1/yfProfile', methods=['GET'])
 def api_yfProfile():
